@@ -5,3 +5,4 @@ discord.log
 # Python cache
 __pycache__/
 *.pyc
+.git
