@@ -5,4 +5,8 @@ discord.log
 # Python cache
 __pycache__/
 *.pyc
-.git
+
+# IDE / system files
+.idea/
+.vscode/
+.DS_Store
