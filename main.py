@@ -7,61 +7,114 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TOKEN = os.getenv('DISCORD_TOKEN')
-CHANNEL_ID = int(os.getenv('CHANNEL_ID'))
-URL = "https://hcmus.edu.vn/thong-tin-danh-cho-nguoi-hoc/"
+TOKEN = os.getenv("DISCORD_TOKEN")
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
 
+# ============ URLs ============
+URL_HCMUS = "https://hcmus.edu.vn/thong-tin-danh-cho-nguoi-hoc/"
+URL_EXAM = "http://ktdbcl.hcmus.edu.vn/index.php/cong-tac-kh-o-thi/l-ch-thi-h-c-ky"
+URL_FIT = "https://www.fit.hcmus.edu.vn/tin-tuc"
+URL_STUDENT_AFFAIRS = "https://hcmus.edu.vn/phong-cong-tac-sinh-vien/"
+
+# ============ Discord Setup ============
 intents = discord.Intents.default()
+intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-latest_post = None  # store the newest post link to avoid duplicates
+latest_posts = {}  # store the latest post per site
 
 
-def fetch_latest_post(limit=1):
-    """Scrape the latest announcement title + URL from HCMUS."""
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/118.0.0.0 Safari/537.36"
-        )
+# ============ Scrapers ============
+def fetch_hcmus_main(limit=1):
+    return fetch_hcmus_common(URL_HCMUS, "HCMUS Main", limit)
+
+
+def fetch_student_affairs(limit=1):
+    return fetch_hcmus_common(URL_STUDENT_AFFAIRS, "Student Affairs", limit)
+
+
+def fetch_hcmus_common(url, name, limit=1):
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        res.raise_for_status()
+        soup = BeautifulSoup(res.text, "html.parser")
+        a_tags = soup.select("a.vc_gitem-link.vc-zone-link")
+        posts = [(a.get("title") or a.text.strip(), a.get("href")) for a in a_tags[:limit]]
+        return posts[0] if posts else None
+    except Exception as e:
+        print(f"❌ Error scraping {name}: {e}")
+        return None
+
+
+def fetch_exam_schedule(limit=1):
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        res = requests.get(URL_EXAM, headers=headers, timeout=10)
+        res.raise_for_status()
+        soup = BeautifulSoup(res.text, "html.parser")
+
+        links = soup.select("div.contentpaneopen a") or soup.select("a[href*='index.php']")
+        posts = []
+        for a in links[:limit]:
+            title = a.text.strip()
+            href = a.get("href")
+            if not href.startswith("http"):
+                href = f"http://ktdbcl.hcmus.edu.vn/{href.lstrip('/')}"
+            posts.append((title, href))
+        return posts[0] if posts else None
+    except Exception as e:
+        print(f"❌ Error scraping Exam Schedule: {e}")
+        return None
+
+
+def fetch_fit_news(limit=1):
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        res = requests.get(URL_FIT, headers=headers, timeout=10)
+        res.raise_for_status()
+        soup = BeautifulSoup(res.text, "html.parser")
+
+        links = soup.select("div.col-lg-9 a") or soup.select("a[href*='/tin-tuc/']")
+        posts = []
+        for a in links[:limit]:
+            title = a.text.strip()
+            href = a.get("href")
+            if not href.startswith("http"):
+                href = f"https://www.fit.hcmus.edu.vn/{href.lstrip('/')}"
+            posts.append((title, href))
+        return posts[0] if posts else None
+    except Exception as e:
+        print(f"❌ Error scraping FIT News: {e}")
+        return None
+
+
+# ============ Background Task ============
+@tasks.loop(minutes=10)
+async def check_new_post():
+    global latest_posts
+    sources = {
+        "HCMUS Main": fetch_hcmus_main,
+        "Exam Schedule": fetch_exam_schedule,
+        "FIT News": fetch_fit_news,
+        "Student Affairs": fetch_student_affairs,
     }
 
-    response = requests.get(URL, headers=headers)
-    response.raise_for_status()
-    soup = BeautifulSoup(response.text, "html.parser")
+    for name, func in sources.items():
+        new_post = func()
+        if not new_post:
+            print(f"⚠️ No posts found for {name}")
+            continue
 
-    post_links = soup.select("a.vc_gitem-link.vc-zone-link")
-
-    posts = []
-    for a in post_links[:limit]:
-        title = a.get("title") or a.get_text(strip=True)
-        link = a.get("href")
-        posts.append((title, link))
-
-    return posts[0] if posts else None
-
-
-@tasks.loop(minutes=10)  # check every 10 minutes
-async def check_new_post():
-    global latest_post
-    new_post = fetch_latest_post()
-
-    if not new_post:
-        print("⚠️ Không tìm thấy bài viết nào.")
-        return
-
-    title, link = new_post
-    if latest_post != link:
-        latest_post = link
-        channel = bot.get_channel(CHANNEL_ID)
-        if channel:
-            # 🔔 Send notification and ping everyone
-            message = f"@everyone 📰 | **{title}**\n{link}"
-            await channel.send(message)
-            print(f"✅ Sent new post: {title}")
-        else:
-            print("❌ Không tìm thấy channel. Kiểm tra CHANNEL_ID trong .env")
+        title, link = new_post
+        if latest_posts.get(name) != link:
+            latest_posts[name] = link
+            channel = bot.get_channel(CHANNEL_ID)
+            if channel:
+                await channel.send(f"@everyone 📰 | **{title}**\n{name}: {link}")
+                print(f"✅ New post sent from {name}: {title}")
+            else:
+                print("❌ Channel not found — check CHANNEL_ID in .env")
 
 
 @bot.event
