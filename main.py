@@ -122,5 +122,23 @@ async def on_ready():
     print(f"✅ Logged in as {bot.user}")
     check_new_post.start()
 
+async def on_disconnect():
+    print("⚠️ Bot disconnected from Discord!")
+    channel = bot.get_channel(CHANNEL_ID)
+    if channel:
+        try:
+            await channel.send("⚠️ **Bot has disconnected from Discord!**")
+        except Exception as e:
+            print(f"❌ Failed to send disconnect message: {e}")
+
+async def on_resumed():
+    print("✅ Bot reconnected to Discord!")
+    channel = bot.get_channel(CHANNEL_ID)
+    if channel:
+        try:
+            await channel.send("✅ **Bot has reconnected to Discord!**")
+        except Exception as e:
+            print(f"❌ Failed to send reconnect message: {e}")
+
 
 bot.run(TOKEN)
