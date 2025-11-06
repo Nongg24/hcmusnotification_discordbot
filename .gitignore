@@ -1,6 +1,7 @@
 # Ignore environment and log files
 .env
 discord.log
+Dockerfile
 
 # Python cache
 __pycache__/
