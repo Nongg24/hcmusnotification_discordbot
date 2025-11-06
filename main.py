@@ -1,14 +1,25 @@
 import os
 import discord
 from discord.ext import commands, tasks
+import asyncio
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
+# ============ Load Environment Variables ============
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
+CHANNEL_IDS = os.getenv("CHANNEL_IDS")
+
+if not TOKEN:
+    raise ValueError("❌ DISCORD_TOKEN not found in .env")
+
+if CHANNEL_IDS:
+    CHANNEL_IDS = [int(cid.strip()) for cid in CHANNEL_IDS.split(",")]
+else:
+    CHANNEL_IDS = []
+    print("⚠️ No CHANNEL_IDS set — bot won't send notifications.")
 
 # ============ URLs ============
 URL_HCMUS = "https://hcmus.edu.vn/thong-tin-danh-cho-nguoi-hoc/"
@@ -21,18 +32,9 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-latest_posts = {}  # store the latest post per site
+latest_posts = {}
 
-
-# ============ Scrapers ============
-def fetch_hcmus_main(limit=1):
-    return fetch_hcmus_common(URL_HCMUS, "HCMUS Main", limit)
-
-
-def fetch_student_affairs(limit=1):
-    return fetch_hcmus_common(URL_STUDENT_AFFAIRS, "Student Affairs", limit)
-
-
+# ============ Scraper Functions ============
 def fetch_hcmus_common(url, name, limit=1):
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
@@ -47,6 +49,14 @@ def fetch_hcmus_common(url, name, limit=1):
         return None
 
 
+def fetch_hcmus_main(limit=1):
+    return fetch_hcmus_common(URL_HCMUS, "HCMUS Main", limit)
+
+
+def fetch_student_affairs(limit=1):
+    return fetch_hcmus_common(URL_STUDENT_AFFAIRS, "Student Affairs", limit)
+
+
 def fetch_exam_schedule(limit=1):
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
@@ -55,17 +65,15 @@ def fetch_exam_schedule(limit=1):
         soup = BeautifulSoup(res.text, "html.parser")
 
         links = soup.select("div.contentpaneopen a") or soup.select("a[href*='index.php']")
-        posts = []
         for a in links[:limit]:
             title = a.text.strip()
             href = a.get("href")
             if not href.startswith("http"):
                 href = f"http://ktdbcl.hcmus.edu.vn/{href.lstrip('/')}"
-            posts.append((title, href))
-        return posts[0] if posts else None
+            return title, href
     except Exception as e:
         print(f"❌ Error scraping Exam Schedule: {e}")
-        return None
+    return None
 
 
 def fetch_fit_news(limit=1):
@@ -76,23 +84,23 @@ def fetch_fit_news(limit=1):
         soup = BeautifulSoup(res.text, "html.parser")
 
         links = soup.select("div.col-lg-9 a") or soup.select("a[href*='/tin-tuc/']")
-        posts = []
         for a in links[:limit]:
             title = a.text.strip()
             href = a.get("href")
             if not href.startswith("http"):
                 href = f"https://www.fit.hcmus.edu.vn/{href.lstrip('/')}"
-            posts.append((title, href))
-        return posts[0] if posts else None
+            return title, href
     except Exception as e:
         print(f"❌ Error scraping FIT News: {e}")
-        return None
+    return None
 
 
 # ============ Background Task ============
 @tasks.loop(minutes=10)
 async def check_new_post():
     global latest_posts
+    loop = asyncio.get_event_loop()
+
     sources = {
         "HCMUS Main": fetch_hcmus_main,
         "Exam Schedule": fetch_exam_schedule,
@@ -101,7 +109,7 @@ async def check_new_post():
     }
 
     for name, func in sources.items():
-        new_post = func()
+        new_post = await loop.run_in_executor(None, func)
         if not new_post:
             print(f"⚠️ No posts found for {name}")
             continue
@@ -109,36 +117,47 @@ async def check_new_post():
         title, link = new_post
         if latest_posts.get(name) != link:
             latest_posts[name] = link
-            channel = bot.get_channel(CHANNEL_ID)
-            if channel:
-                await channel.send(f"@everyone 📰 | **{title}**\n{name}: {link}")
-                print(f"✅ New post sent from {name}: {title}")
-            else:
-                print("❌ Channel not found — check CHANNEL_ID in .env")
+            print(f"🆕 New post detected from {name}: {title}")
+            for channel_id in CHANNEL_IDS:
+                channel = bot.get_channel(channel_id)
+                if channel:
+                    try:
+                        await channel.send(f"@everyone 📰 | **{title}**\n{name}: {link}")
+                    except Exception as e:
+                        print(f"❌ Failed to send message to {channel_id}: {e}")
+
+
+# ============ Event Handlers ============
+@bot.event
+async def on_ready():
+    print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
+    if not check_new_post.is_running():
+        check_new_post.start()
 
 
 @bot.event
-async def on_ready():
-    print(f"✅ Logged in as {bot.user}")
-    check_new_post.start()
-
 async def on_disconnect():
     print("⚠️ Bot disconnected from Discord!")
-    channel = bot.get_channel(CHANNEL_ID)
-    if channel:
-        try:
-            await channel.send("⚠️ **Bot has disconnected from Discord!**")
-        except Exception as e:
-            print(f"❌ Failed to send disconnect message: {e}")
+    for channel_id in CHANNEL_IDS:
+        channel = bot.get_channel(channel_id)
+        if channel:
+            try:
+                await channel.send("⚠️ **Bot has disconnected from Discord!**")
+            except Exception as e:
+                print(f"❌ Failed to send disconnect message: {e}")
 
+
+@bot.event
 async def on_resumed():
     print("✅ Bot reconnected to Discord!")
-    channel = bot.get_channel(CHANNEL_ID)
-    if channel:
-        try:
-            await channel.send("✅ **Bot has reconnected to Discord!**")
-        except Exception as e:
-            print(f"❌ Failed to send reconnect message: {e}")
+    for channel_id in CHANNEL_IDS:
+        channel = bot.get_channel(channel_id)
+        if channel:
+            try:
+                await channel.send("✅ **Bot has reconnected to Discord!**")
+            except Exception as e:
+                print(f"❌ Failed to send reconnect message: {e}")
 
 
+# ============ Run Bot ============
 bot.run(TOKEN)
