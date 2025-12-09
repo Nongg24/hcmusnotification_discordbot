@@ -1,6 +1,6 @@
 import os
 import discord
-from discord.ext import commands, tasks
+from discord. ext import commands, tasks
 import asyncio
 import requests
 from bs4 import BeautifulSoup
@@ -16,19 +16,19 @@ if not TOKEN:
     raise ValueError("❌ DISCORD_TOKEN not found in .env")
 
 if CHANNEL_IDS:
-    CHANNEL_IDS = [int(cid.strip()) for cid in CHANNEL_IDS.split(",")]
+    CHANNEL_IDS = [int(cid.strip()) for cid in CHANNEL_IDS. split(",")]
 else:
     CHANNEL_IDS = []
     print("⚠️ No CHANNEL_IDS set — bot won't send notifications.")
 
 # ============ URLs ============
 URL_HCMUS = "https://hcmus.edu.vn/thong-tin-danh-cho-nguoi-hoc/"
-URL_EXAM = "http://ktdbcl.hcmus.edu.vn/index.php/cong-tac-kh-o-thi/l-ch-thi-h-c-ky"
+URL_EXAM = "http://ktdbcl.hcmus.edu.vn/index.php/cong-tac-kh-o-thi/l-ch-thi-h-c-ky?format=feed&type=rss"
 URL_FIT = "https://www.fit.hcmus.edu.vn/tin-tuc"
 URL_STUDENT_AFFAIRS = "https://hcmus.edu.vn/phong-cong-tac-sinh-vien/"
 
 # ============ Discord Setup ============
-intents = discord.Intents.default()
+intents = discord. Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -42,7 +42,7 @@ def fetch_hcmus_common(url, name, limit=1):
         res.raise_for_status()
         soup = BeautifulSoup(res.text, "html.parser")
         a_tags = soup.select("a.vc_gitem-link.vc-zone-link")
-        posts = [(a.get("title") or a.text.strip(), a.get("href")) for a in a_tags[:limit]]
+        posts = [(a. get("title") or a.text.strip(), a.get("href")) for a in a_tags[:limit]]
         return posts[0] if posts else None
     except Exception as e:
         print(f"❌ Error scraping {name}: {e}")
@@ -62,17 +62,19 @@ def fetch_exam_schedule(limit=1):
     try:
         res = requests.get(URL_EXAM, headers=headers, timeout=10)
         res.raise_for_status()
-        soup = BeautifulSoup(res.text, "html.parser")
+        soup = BeautifulSoup(res.text, features="xml")  # Use XML parser for RSS feed
 
-        links = soup.select("div.contentpaneopen a") or soup.select("a[href*='index.php']")
-        for a in links[:limit]:
-            title = a.text.strip()
-            href = a.get("href")
-            if not href.startswith("http"):
-                href = f"http://ktdbcl.hcmus.edu.vn/{href.lstrip('/')}"
-            return title, href
+        # Parse RSS feed structure
+        items = soup.find_all("item")
+        for item in items[: limit]:
+            title_tag = item.find("title")
+            link_tag = item.find("link")
+            title = title_tag.text.strip() if title_tag else ""
+            link = link_tag.text.strip() if link_tag else ""
+            if title and link:
+                return title, link
     except Exception as e:
-        print(f"❌ Error scraping Exam Schedule: {e}")
+        print(f"❌ Error scraping Exam Schedule:  {e}")
     return None
 
 
@@ -103,14 +105,14 @@ async def check_new_post():
 
     sources = {
         "HCMUS Main": fetch_hcmus_main,
-        "Exam Schedule": fetch_exam_schedule,
+        "Exam Schedule":  fetch_exam_schedule,
         "FIT News": fetch_fit_news,
         "Student Affairs": fetch_student_affairs,
     }
 
     for name, func in sources.items():
         new_post = await loop.run_in_executor(None, func)
-        if not new_post:
+        if not new_post: 
             print(f"⚠️ No posts found for {name}")
             continue
 
@@ -118,10 +120,10 @@ async def check_new_post():
         if latest_posts.get(name) != link:
             latest_posts[name] = link
             print(f"🆕 New post detected from {name}: {title}")
-            for channel_id in CHANNEL_IDS:
+            for channel_id in CHANNEL_IDS: 
                 channel = bot.get_channel(channel_id)
                 if channel:
-                    try:
+                    try: 
                         await channel.send(f"@everyone 📰 | **{title}**\n{name}: {link}")
                     except Exception as e:
                         print(f"❌ Failed to send message to {channel_id}: {e}")
@@ -138,7 +140,7 @@ async def on_ready():
 @bot.event
 async def on_disconnect():
     print("⚠️ Bot disconnected from Discord!")
-    for channel_id in CHANNEL_IDS:
+    for channel_id in CHANNEL_IDS: 
         channel = bot.get_channel(channel_id)
         if channel:
             try:
@@ -149,12 +151,12 @@ async def on_disconnect():
 
 @bot.event
 async def on_resumed():
-    print("✅ Bot reconnected to Discord!")
-    for channel_id in CHANNEL_IDS:
+    print("✅ Bot reconnected to Discord! ") 
+    for channel_id in CHANNEL_IDS: 
         channel = bot.get_channel(channel_id)
         if channel:
             try:
-                await channel.send("✅ **Bot has reconnected to Discord!**")
+                await channel.send("✅ **Bot has reconnected to Discord! **")
             except Exception as e:
                 print(f"❌ Failed to send reconnect message: {e}")
 
